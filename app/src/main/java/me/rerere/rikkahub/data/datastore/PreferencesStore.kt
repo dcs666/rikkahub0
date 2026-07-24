@@ -704,11 +704,21 @@ private fun Model.findModelProviderFromList(providers: List<ProviderSetting>): P
 }
 
 internal val DEFAULT_ASSISTANT_ID = Uuid.parse("0950e2dc-9bd5-4801-afa3-aa887aa36b4e")
+/** 首次启动时自动预装的内置技能 */
+internal val DEFAULT_BUILT_IN_SKILLS = setOf(
+    "elite-longterm-memory",
+    "dbs-learning",
+    "find-skills",
+    "self-improving-agent",
+    "爬虫技能",
+)
+
 internal val DEFAULT_ASSISTANTS = listOf(
     Assistant(
         id = DEFAULT_ASSISTANT_ID,
         name = "",
-        systemPrompt = ""
+        systemPrompt = "",
+        enabledSkills = DEFAULT_BUILT_IN_SKILLS,
     ),
     Assistant(
         id = Uuid.parse("3d47790c-c415-4b90-9388-751128adb0a0"),
