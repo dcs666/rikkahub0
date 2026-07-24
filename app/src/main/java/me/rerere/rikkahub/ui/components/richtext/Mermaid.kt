@@ -96,11 +96,11 @@ fun Mermaid(
 
     // 动态高度：Mermaid 渲染完成后由 JS 汇报实际内容高度
     var renderedHeight by remember { mutableStateOf(200.dp) }
+    val density = LocalDensity.current
 
     val renderInterface = remember {
         MermaidRenderInterface(
             onRendered = { heightPx ->
-                val density = LocalDensity.current
                 renderedHeight = with(density) { heightPx.toDp() + 16.dp }
             }
         )
