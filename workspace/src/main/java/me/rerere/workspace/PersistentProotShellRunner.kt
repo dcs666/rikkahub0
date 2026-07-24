@@ -78,8 +78,7 @@ class PersistentProotShellRunner(
 
         val D = "${'$'}"
         val daemonScript = """
-            /usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8 /bin/bash -l -c '
-                set +m
+            /usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8 /bin/sh -c '
                 FIFO=$WORKSPACE_DIR/.proot_cmd
                 RESULT_DIR=$WORKSPACE_DIR/.proot_results
                 WORKER_FILE=$WORKSPACE_DIR/.proot_workers
@@ -280,7 +279,7 @@ class PersistentProotShellRunner(
             if (File(path).exists()) { command += "-b"; command += path }
         }
 
-        command += listOf("/bin/bash", "-c", daemonScript)
+        command += listOf("/bin/sh", "-c", daemonScript)
         return command
     }
 
