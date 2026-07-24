@@ -77,51 +77,64 @@ class PersistentProotShellRunner(
         activeWorkers[key] = AtomicInteger(0)
 
         val D = "${'$'}"
+        val MAX = MAX_CONCURRENT
         val daemonScript = """
             /usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8 /bin/sh -c '
                 FIFO=$WORKSPACE_DIR/.proot_cmd
                 RESULT_DIR=$WORKSPACE_DIR/.proot_results
-                WORKER_FILE=$WORKSPACE_DIR/.proot_workers
+                MAX=$MAX
                 rm -f "${D}FIFO"
                 mkfifo "${D}FIFO"
 
-                # 后台并发执行命令，最多 MAX_CONCURRENT 个
-                # 输入格式: timeout_ms|command
-                # cd 类命令直接eval（保持状态），其余后台执行
+                # PID 列表 = 活跃后台任务
+                pids=""
+
                 while true; do
                     if read -r line < "${D}FIFO"; then
                         [ -z "${D}line" ] && continue
                         [ "${D}line" = "__exit__" ] && break
 
-                        # 解析超时和命令
                         timeout_ms="${D}{line%%|*}"
                         cmd="${D}{line#*|}"
 
-                        # 如果超时为空，用默认 30s
                         [ -z "${D}timeout_ms" ] && timeout_ms=30000
-                        timeout_s=$((timeout_ms / 1000))  # ms → s
+                        timeout_s=$((timeout_ms / 1000))
                         [ "${D}timeout_s" -le 0 ] 2>/dev/null && timeout_s=30
 
                         result_file="${D}RESULT_DIR/out_$(date +%s%N)"
 
-                        # cd 命令串行执行（保持状态），其余后台并行
                         case "${D}cmd" in
                             cd\ *)
                                 eval "${D}cmd"
                                 echo "__exitcode__${D}?" > "${D}result_file"
                                 ;;
                             *)
-                                # 后台执行，不阻塞 FIFO 读取
-                                # 优先用 timeout 命令，fallback 直接执行
+                                # 等待空闲 slot
+                                while : ; do
+                                    pids_clean
+                                    n=0; for p in ${D}pids; do n=$((n+1)); done
+                                    [ "${D}n" -lt "${D}MAX" ] && break
+                                    sleep 0.05
+                                done
+
                                 if command -v timeout >/dev/null 2>&1; then
-                                    ( timeout "${D}timeout_s" bash -c "${D}cmd" > "${D}result_file" 2>&1; echo "__exitcode__${D}?" >> "${D}result_file" ) &
+                                    ( timeout "${D}timeout_s" sh -c "${D}cmd" > "${D}result_file" 2>&1; echo "__exitcode__${D}?" >> "${D}result_file" ) &
                                 else
-                                    ( bash -c "${D}cmd" > "${D}result_file" 2>&1; echo "__exitcode__${D}?" >> "${D}result_file" ) &
+                                    ( sh -c "${D}cmd" > "${D}result_file" 2>&1; echo "__exitcode__${D}?" >> "${D}result_file" ) &
                                 fi
+                                pids="${D}pids ${D}!"
                                 ;;
                         esac
                     fi
                 done
+
+                pids_clean() {
+                    new=""
+                    for pid in ${D}pids; do
+                        kill -0 "${D}pid" 2>/dev/null && new="${D}new ${D}pid"
+                    done
+                    pids="${D}new"
+                }
             '
         """.trimIndent()
 
