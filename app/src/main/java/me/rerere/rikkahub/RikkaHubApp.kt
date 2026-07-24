@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import me.rerere.common.android.appTempFolder
 import me.rerere.common.http.SharedHttpClient
+import me.rerere.rikkahub.data.files.SkillManager
 import com.whl.quickjs.android.QuickJSLoader
 import me.rerere.rikkahub.di.appModule
 import me.rerere.rikkahub.di.dataSourceModule
@@ -76,6 +77,11 @@ class RikkaHubApp : Application() {
 
         // cleanup stale tool output files
         cleanupToolOutputs()
+
+        // extract built-in skills from assets (only copies new ones)
+        get<AppScope>().launch(Dispatchers.IO) {
+            SkillManager.extractBuiltInSkills(this@RikkaHubApp)
+        }
 
         // cleanup workspace temp dirs (proot + rootfs /tmp)
         cleanupWorkspaceTempDirs()

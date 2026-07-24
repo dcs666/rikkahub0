@@ -13,6 +13,51 @@ class SkillManager(
 ) {
     companion object {
         private const val TAG = "SkillManager"
+        private const val BUILT_IN_SKILLS_ASSET_PATH = "skills"
+
+        /**
+         * 从 assets 提取内置技能到用户技能目录。
+         * 仅复制尚不存在的技能，不会覆盖用户已安装/修改的技能。
+         */
+        suspend fun extractBuiltInSkills(context: Context) = withContext(Dispatchers.IO) {
+            val skillsDir = context.filesDir.resolve(FileFolders.SKILLS)
+            skillsDir.mkdirs()
+            val assetManager = context.assets
+
+            try {
+                val builtInNames = assetManager.list(BUILT_IN_SKILLS_ASSET_PATH) ?: return@withContext
+                for (skillName in builtInNames) {
+                    val targetDir = skillsDir.resolve(skillName)
+                    if (targetDir.exists()) continue // 已存在，不覆盖
+
+                    val assetSkillPath = "$BUILT_IN_SKILLS_ASSET_PATH/$skillName"
+                    copyAssetDir(assetManager, assetSkillPath, targetDir)
+                    Log.i(TAG, "extractBuiltInSkills: Installed built-in skill '$skillName'")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "extractBuiltInSkills: Failed to extract built-in skills", e)
+            }
+        }
+
+        private fun copyAssetDir(assetManager: android.content.res.AssetManager, assetPath: String, targetDir: File) {
+            targetDir.mkdirs()
+            val entries = assetManager.list(assetPath) ?: return
+            for (entry in entries) {
+                val fullAssetPath = "$assetPath/$entry"
+                val childTarget = File(targetDir, entry)
+                // 尝试作为文件读取，如果成功则是文件；否则是目录
+                try {
+                    assetManager.open(fullAssetPath).use { input ->
+                        childTarget.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                } catch (e: java.io.FileNotFoundException) {
+                    // 是目录
+                    copyAssetDir(assetManager, fullAssetPath, childTarget)
+                }
+            }
+        }
     }
 
     fun getSkillsDir(): File {
