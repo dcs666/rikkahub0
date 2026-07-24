@@ -70,6 +70,12 @@ private class LruKeyRoulette(
 
             providerCache[selected] = now
             allCache[providerId] = providerCache
+
+            // 清理已过期的其他 provider 条目
+            allCache.entries.removeIf { (id, cache) ->
+                id != providerId && cache.values.all { now - it >= EXPIRE_DURATION_MS }
+            }
+
             memoryCache = allCache
             dirty = true
 

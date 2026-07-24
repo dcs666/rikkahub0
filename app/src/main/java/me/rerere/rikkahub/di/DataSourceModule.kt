@@ -233,7 +233,6 @@ val dataSourceModule = module {
         val sharedClient = get<OkHttpClient>()
         HttpClient(OkHttp) {
             engine {
-                sharedClient.connectionPool.connectionCount()
                 config {
                     connectTimeout(20, TimeUnit.SECONDS)
                     readTimeout(10, TimeUnit.MINUTES)
