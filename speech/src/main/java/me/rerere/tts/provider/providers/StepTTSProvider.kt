@@ -12,10 +12,9 @@ import me.rerere.tts.model.TTSRequest
 import me.rerere.tts.provider.TTSProvider
 import me.rerere.tts.provider.TTSProviderSetting
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
+import me.rerere.common.http.SharedHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.concurrent.TimeUnit
 
 private const val TAG = "StepTTSProvider"
 
@@ -37,10 +36,8 @@ private val JSON_MEDIA_TYPE = "application/json".toMediaType()
  * - 开发指南: https://platform.stepfun.com/docs/zh/guides/developer/tts
  */
 class StepTTSProvider : TTSProvider<TTSProviderSetting.Step> {
-    private val httpClient = OkHttpClient.Builder()
+    private val httpClient = SharedHttpClient.get()
         // 一次性合成可能比较慢 (长文本 + 高质量模型), 给足读超时
-        .readTimeout(120, TimeUnit.SECONDS)
-        .build()
 
     override fun generateSpeech(
         context: Context,

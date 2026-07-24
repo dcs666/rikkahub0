@@ -11,18 +11,15 @@ import me.rerere.tts.model.TTSRequest
 import me.rerere.tts.provider.TTSProvider
 import me.rerere.tts.provider.TTSProviderSetting
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
+import me.rerere.common.http.SharedHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 private const val TAG = "OpenAITTSProvider"
 
 class OpenAITTSProvider : TTSProvider<TTSProviderSetting.OpenAI> {
-    private val httpClient = OkHttpClient.Builder()
-        .readTimeout(120, TimeUnit.SECONDS)
-        .build()
+    private val httpClient = SharedHttpClient.get()
 
     override fun generateSpeech(
         context: Context,

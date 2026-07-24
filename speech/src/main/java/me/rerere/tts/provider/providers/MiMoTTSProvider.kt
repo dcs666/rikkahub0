@@ -16,11 +16,10 @@ import me.rerere.tts.model.TTSRequest
 import me.rerere.tts.provider.TTSProvider
 import me.rerere.tts.provider.TTSProviderSetting
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
+import me.rerere.common.http.SharedHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.Base64
-import java.util.concurrent.TimeUnit
 
 // MiMo 流式音频按文档示例使用 24kHz PCM16LE
 private const val MIMO_SAMPLE_RATE = 24000
@@ -108,9 +107,7 @@ internal class MiMoSseProcessor(
 }
 
 class MiMoTTSProvider : TTSProvider<TTSProviderSetting.MiMo> {
-    private val httpClient = OkHttpClient.Builder()
-        .readTimeout(120, TimeUnit.SECONDS)
-        .build()
+    private val httpClient = SharedHttpClient.get()
 
     // MiMo 支持在朗读文本中嵌入风格/音频标签控制语气与情感
     // 官方文档: https://xiaomimimo.com (音频标签控制)

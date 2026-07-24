@@ -34,7 +34,7 @@ import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.search.SearchService
 import me.rerere.rikkahub.data.sync.S3Sync
-import okhttp3.ConnectionPool
+import me.rerere.common.http.SharedHttpClient
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -42,7 +42,6 @@ import org.koin.dsl.module
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 val dataSourceModule = module {
     single {
@@ -165,15 +164,7 @@ val dataSourceModule = module {
     single<OkHttpClient> {
         val acceptLang = AcceptLanguageBuilder.fromAndroid(get())
             .build()
-        OkHttpClient.Builder()
-            .connectionPool(ConnectionPool(20, 30, TimeUnit.SECONDS))
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.MINUTES)
-            .writeTimeout(120, TimeUnit.SECONDS)
-            .followSslRedirects(true)
-            .followRedirects(true)
-            .retryOnConnectionFailure(true)
-            .dns(CachingDns())
+        SharedHttpClient.get().newBuilder()
             .addInterceptor { chain ->
                 val originalRequest = chain.request()
                 val requestBuilder = originalRequest.newBuilder()
@@ -267,23 +258,4 @@ val dataSourceModule = module {
     }
 }
 
-/** DNS 缓存：减少重复 DNS 查询，每次调用可节省 20-100ms */
-private class CachingDns : okhttp3.Dns {
-    private val cache = LinkedHashMap<String, List<java.net.InetAddress>>(
-        32, 0.75f, true  // access-order = LRU
-    )
-    private val default = okhttp3.Dns.SYSTEM
 
-    override fun lookup(hostname: String): List<java.net.InetAddress> {
-        synchronized(cache) {
-            val cached = cache[hostname]
-            if (cached != null) return cached
-        }
-        val result = default.lookup(hostname)
-        synchronized(cache) {
-            if (cache.size >= 256) cache.remove(cache.keys.first())
-            cache[hostname] = result
-        }
-        return result
-    }
-}
