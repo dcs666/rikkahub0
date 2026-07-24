@@ -150,8 +150,9 @@ class PersistentProotShellRunner(
         timeoutMillis: Long,
         resultDir: File? = null,
     ): WorkspaceCommandResult {
+        // resultDir = filesDir/.proot_results → parentFile = filesDir（FIFO 所在目录）
         val pipe = commandPipes[key] ?: File(
-            resultDirs[key]?.parentFile?.parentFile ?: return WorkspaceCommandResult(1, "", "No pipe available"),
+            resultDirs[key]?.parentFile ?: return WorkspaceCommandResult(1, "", "No pipe available"),
             ".proot_cmd"
         ).also { commandPipes[key] = it }
 
