@@ -140,9 +140,8 @@ ksp {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
-        freeCompilerArgs.addAll(
+        freeCompilerArgs.add(
             "-Xbackend-threads=8",       // 并行Kotlin代码生成
-            "-Xjvm-default=all",         // 支持JVM默认方法
         )
     }
 }

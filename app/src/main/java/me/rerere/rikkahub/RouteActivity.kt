@@ -175,15 +175,11 @@ class RouteActivity : ComponentActivity() {
         setContent {
             RikkahubTheme {
                 setSingletonImageLoaderFactory { context ->
-                    val memoryCacheSize = (Runtime.getRuntime().maxMemory() / 4).toInt() // 25% of heap = ~128MB
+                    val memoryCacheSize = Runtime.getRuntime().maxMemory() / 4 // 25% of heap = ~128MB
                     ImageLoader.Builder(context)
                         .crossfade(true)
                         .memoryCachePolicy(CachePolicy.ENABLED)
-                        .memoryCache {
-                            MemoryCache.Builder()
-                                .maxSizeBytes(memoryCacheSize)
-                                .build()
-                        }
+                        .memoryCache { MemoryCache.Builder().maxSizeBytes(memoryCacheSize).build() }
                         .components {
                             add(
                                 OkHttpNetworkFetcherFactory(

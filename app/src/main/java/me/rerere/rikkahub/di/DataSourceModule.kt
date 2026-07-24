@@ -42,6 +42,7 @@ import org.koin.dsl.module
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 val dataSourceModule = module {
     single {
