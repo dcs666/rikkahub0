@@ -13,6 +13,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -78,6 +79,8 @@ class McpManager(
             settingsStore.settingsFlow
                 .map { settings -> settings.mcpServers }
                 .distinctUntilChanged()
+                // 防抖300ms：避免频繁设置变更导致MCP反复重连
+                .debounce(300)
                 .collect(sessionRegistry::reconcile)
         }
     }

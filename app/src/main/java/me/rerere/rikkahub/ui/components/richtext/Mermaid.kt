@@ -15,7 +15,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,12 +93,25 @@ fun Mermaid(
         )
     }
 
+    // 动态高度：Mermaid 渲染完成后由 JS 汇报实际内容高度
+    var renderedHeight by remember { mutableStateOf(200.dp) }
+
+    val renderInterface = remember {
+        MermaidRenderInterface(
+            onRendered = { heightPx ->
+                val density = LocalDensity.current
+                renderedHeight = with(density) { heightPx.toDp() + 16.dp }
+            }
+        )
+    }
+
     val webViewState = rememberWebViewState(
         data = html,
         mimeType = "text/html",
         encoding = "UTF-8",
         interfaces = mapOf(
-            "AndroidInterface" to jsInterface
+            "AndroidInterface" to jsInterface,
+            "RenderInterface" to renderInterface,
         ),
         settings = {
             builtInZoomControls = true
@@ -112,7 +128,7 @@ fun Mermaid(
             state = webViewState,
             modifier = Modifier
                 .clip(RoundedCornerShape(4.dp))
-                .height(200.dp),
+                .height(renderedHeight),
         )
 
         if (activity != null) {
@@ -157,6 +173,16 @@ private class MermaidInterface(
     @JavascriptInterface
     fun exportImage(base64Image: String) {
         onExportImage(base64Image)
+    }
+}
+
+/** 接收 Mermaid 渲染完成后内容高度回调，用于动态调整 WebView 高度 */
+private class MermaidRenderInterface(
+    private val onRendered: (Int) -> Unit
+) {
+    @JavascriptInterface
+    fun onRendered(height: Int) {
+        onRendered(height)
     }
 }
 
@@ -206,6 +232,33 @@ private fun buildMermaidHtml(
                 ${code.escapeHtml()}
             </pre>
             <script>
+              // 渲染完成后通知 Android 端实际高度
+              function reportHeight() {
+                const svg = document.querySelector('.mermaid svg');
+                if (svg) {
+                  const height = svg.getBoundingClientRect().height;
+                  RenderInterface.onRendered(Math.ceil(height));
+                }
+              }
+
+              // 监听 mermaid 渲染完成事件
+              document.addEventListener('DOMContentLoaded', function() {
+                // 轮询检测 mermaid 是否渲染完成（startOnLoad 异步渲染）
+                var checkCount = 0;
+                var checkTimer = setInterval(function() {
+                  var svg = document.querySelector('.mermaid svg');
+                  if (svg) {
+                    clearInterval(checkTimer);
+                    reportHeight();
+                  }
+                  checkCount++;
+                  if (checkCount > 60) { // 最多等 30 秒
+                    clearInterval(checkTimer);
+                    reportHeight();
+                  }
+                }, 500);
+              });
+
               mermaid.initialize({
                     startOnLoad: true,
                     theme: 'base',

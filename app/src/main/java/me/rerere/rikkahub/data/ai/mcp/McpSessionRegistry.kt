@@ -378,11 +378,15 @@ internal class McpSessionRegistry(
         }
     }
 
+    /** 最小重连间隔（即使 backoff 计算出更短的值，也不低于此值） */
+    private val MIN_RECONNECT_DELAY_MS = 10_000L // 10秒
+
     private suspend fun reconnectAfterDelay(session: McpSession, delayMs: Long) {
+        val actualDelay = maxOf(delayMs, MIN_RECONNECT_DELAY_MS)
         val runningJob = currentCoroutineContext().job
         var retry = false
         try {
-            delay(delayMs)
+            delay(actualDelay)
             val latestConfig = settingsStore.settingsFlow.value.mcpServers.find {
                 it.id == session.config.id &&
                     it.commonOptions.enable &&
