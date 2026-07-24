@@ -48,11 +48,14 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import coil3.ImageLoader
+import coil3.annotation.ExperimentalCoilApi
 import coil3.compose.setSingletonImageLoaderFactory
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
+import coil3.memory.MemoryCache
 import coil3.network.cachecontrol.CacheControlCacheStrategy
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.CachePolicy
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
 import com.dokar.sonner.Toaster
@@ -172,8 +175,15 @@ class RouteActivity : ComponentActivity() {
         setContent {
             RikkahubTheme {
                 setSingletonImageLoaderFactory { context ->
+                    val memoryCacheSize = (Runtime.getRuntime().maxMemory() / 4).toInt() // 25% of heap = ~128MB
                     ImageLoader.Builder(context)
                         .crossfade(true)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .memoryCache {
+                            MemoryCache.Builder()
+                                .maxSizeBytes(memoryCacheSize)
+                                .build()
+                        }
                         .components {
                             add(
                                 OkHttpNetworkFetcherFactory(
