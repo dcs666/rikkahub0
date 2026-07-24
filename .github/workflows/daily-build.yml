@@ -1,6 +1,10 @@
 name: Daily Build
 
 on:
+  # push 时自动构建（含所有分支）
+  push:
+    branches:
+      - '**'
   # 每天 UTC 18:00 触发（北京时间次日 02:00），可按需修改
   schedule:
     - cron: '0 18 * * *'
@@ -113,5 +117,4 @@ jobs:
 
             > ⚠️ 开发版本，可能不稳定，仅供测试。
           files: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/**/*.apk
