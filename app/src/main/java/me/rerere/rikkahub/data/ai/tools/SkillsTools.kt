@@ -27,17 +27,23 @@ fun createSkillTools(
             """.trimIndent(),
             systemPrompt = { _, _ ->
                 buildString {
-                    appendLine("**Skills**")
-                    appendLine("You have access to the following skills. Use the `use_skill` tool to load a skill's instructions when the user's request matches.")
-                    appendLine("<available_skills>")
+                    appendLine("**Auto-loaded Skills**")
+                    appendLine("The following skills are automatically loaded. Read and follow their instructions as needed:")
                     available.forEach { skill ->
-                        appendLine("  <skill>")
-                        appendLine("    <name>${skill.name}</name>")
-                        appendLine("    <description>${skill.description}</description>")
-                        appendLine("  </skill>")
+                        val body = skillManager.readSkillBody(skill.name) ?: return@forEach
+                        appendLine()
+                        appendLine("=== Skill: ${skill.name} ===")
+                        // 大技能截取关键部分（前200行），避免撑爆上下文
+                        val lines = body.trim().lines()
+                        if (lines.size > 200) {
+                            appendLine(lines.take(200).joinToString("\n"))
+                            appendLine()
+                            appendLine("[...技能较长，仅展示开头200行/共${lines.size}行。如需完整内容，使用 use_skill 工具加载]")
+                        } else {
+                            appendLine(body.trim())
+                        }
+                        appendLine("=== End ${skill.name} ===")
                     }
-                    append("</available_skills>")
-                    appendLine()
                 }
             },
             parameters = {
