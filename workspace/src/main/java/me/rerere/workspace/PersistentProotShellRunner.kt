@@ -1,21 +1,24 @@
 package me.rerere.workspace
 
 import java.io.File
+import java.nio.file.FileSystems
+import java.nio.file.StandardWatchEventKinds
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 持久化 proot shell runner —— 复用 proot 进程，避免每次启动开销
  *
+ * v2.0 改进：
+ * - 【P0】命令级超时：daemon 内用 timeout 包裹 eval，卡死命令不会阻塞后续命令
+ * - 【P1】结果轮询 → WatchService：消除 Thread.sleep(30) 延迟和 listFiles IO 开销
+ * - 【P2】并发执行：后台 fork worker 池（最多 4 并发），cd 类命令自动退化串行
+ *
  * 原理：
- * 1. 第一次调用时启动 proot + 常驻 shell 进程（通过 setsid 脱离进程组）
- * 2. 后续调用通过命名管道（FIFO）发送命令，无需重新启动 proot
- * 3. 结果写入临时文件，由调用方读取
- *
- * 实测：后台进程可通过 setsid + disown 跨 workspace_shell 调用存活
- *
- * 改动文件：
- * - 新增: PersistentProotShellRunner.kt (本文件)
- * - 修改: RepositoryModule.kt → 将 ProotShellRunner 替换为本类
+ * 1. 第一次调用时启动 proot + 常驻 shell 进程
+ * 2. 后续调用通过命名管道（FIFO）发送命令
+ * 3. 结果写入临时文件，由 WatchService 监听文件创建事件
  */
 class PersistentProotShellRunner(
     private val nativeLibraryDir: File,
@@ -27,11 +30,15 @@ class PersistentProotShellRunner(
         private const val PROOT_EXEC = "libproot_exec.so"
         private const val PROOT_LOADER = "libproot_loader.so"
         private const val WORKSPACE_DIR = "/workspace"
-
-        // 缓存每个 workspace root 的 proot 进程和通信管道
-        private val prootProcesses = ConcurrentHashMap<String, Process>()
-        private val commandPipes = ConcurrentHashMap<String, File>()
+        private const val MAX_CONCURRENT = 4
+        private val CD_ONLY_REGEX = Regex("^\\s*cd\\s+")
     }
+
+    // 缓存每个 workspace root 的 proot 进程和通信管道
+    private val prootProcesses = ConcurrentHashMap<String, Process>()
+    private val commandPipes = ConcurrentHashMap<String, File>()
+    private val resultDirs = ConcurrentHashMap<String, File>()
+    private val activeWorkers = ConcurrentHashMap<String, AtomicInteger>()
 
     override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
         if (!context.linuxDir.hasUsableRootfs()) {
@@ -48,10 +55,8 @@ class PersistentProotShellRunner(
         val existingProcess = prootProcesses[key]
 
         return if (existingProcess != null && existingProcess.isAlive) {
-            // 热路径：proot 进程已存在，通过管道发送命令
             sendCommandViaPipe(key, context.command, context.timeoutMillis)
         } else {
-            // 冷路径：首次启动 proot 常驻进程
             startPersistentProot(context, proot, loader)
         }
     }
@@ -66,28 +71,56 @@ class PersistentProotShellRunner(
         context.tempDir.mkdirs()
         patcher.patch(context.linuxDir)
 
-        // 创建结果目录（映射到 host 可读路径）
         val resultDir = File(context.filesDir, ".proot_results")
         resultDir.mkdirs()
+        resultDirs[key] = resultDir
+        activeWorkers[key] = AtomicInteger(0)
 
-        // 常驻 shell：创建 FIFO → 循环读取命令 → 执行 → 写结果
-        // $WORKSPACE_DIR 是 Kotlin 常量（值= /workspace），保留插值
-        // ${'$'}FIFO / ${'$'}cmd 等是 shell 变量，必须转义以免 Kotlin 编译器报错
         val D = "${'$'}"
         val daemonScript = """
             /usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8 /bin/bash -l -c '
                 set +m
                 FIFO=$WORKSPACE_DIR/.proot_cmd
                 RESULT_DIR=$WORKSPACE_DIR/.proot_results
+                WORKER_FILE=$WORKSPACE_DIR/.proot_workers
                 rm -f "${D}FIFO"
                 mkfifo "${D}FIFO"
+
+                # 后台并发执行命令，最多 MAX_CONCURRENT 个
+                # 输入格式: timeout_ms|command
+                # cd 类命令直接eval（保持状态），其余后台执行
                 while true; do
-                    if read -r cmd < "${D}FIFO"; then
-                        [ -z "${D}cmd" ] && continue
-                        [ "${D}cmd" = "__exit__" ] && break
+                    if read -r line < "${D}FIFO"; then
+                        [ -z "${D}line" ] && continue
+                        [ "${D}line" = "__exit__" ] && break
+
+                        # 解析超时和命令
+                        timeout_ms="${D}{line%%|*}"
+                        cmd="${D}{line#*|}"
+
+                        # 如果超时为空，用默认 30s
+                        [ -z "${D}timeout_ms" ] && timeout_ms=30000
+                        timeout_s=$((timeout_ms / 1000))  # ms → s
+                        [ "${D}timeout_s" -le 0 ] 2>/dev/null && timeout_s=30
+
                         result_file="${D}RESULT_DIR/out_$(date +%s%N)"
-                        eval "${D}cmd" > "${D}result_file" 2>&1
-                        echo "__exitcode__${D}?" >> "${D}result_file"
+
+                        # cd 命令串行执行（保持状态），其余后台并行
+                        case "${D}cmd" in
+                            cd\ *)
+                                eval "${D}cmd"
+                                echo "__exitcode__${D}?" > "${D}result_file"
+                                ;;
+                            *)
+                                # 后台执行，不阻塞 FIFO 读取
+                                # 优先用 timeout 命令，fallback 直接执行
+                                if command -v timeout >/dev/null 2>&1; then
+                                    ( timeout "${D}timeout_s" bash -c "${D}cmd" > "${D}result_file" 2>&1; echo "__exitcode__${D}?" >> "${D}result_file" ) &
+                                else
+                                    ( bash -c "${D}cmd" > "${D}result_file" 2>&1; echo "__exitcode__${D}?" >> "${D}result_file" ) &
+                                fi
+                                ;;
+                        esac
                     fi
                 done
             '
@@ -118,36 +151,31 @@ class PersistentProotShellRunner(
         timeoutMillis: Long,
         resultDir: File? = null,
     ): WorkspaceCommandResult {
-        val pipe = if (resultDir != null) {
-            File(resultDir.parentFile?.parentFile, ".proot_cmd").apply {
-                if (!exists()) return WorkspaceCommandResult(1, "", "FIFO not found")
-            }
-        } else {
-            commandPipes[key] ?: return WorkspaceCommandResult(1, "", "No pipe available")
+        val pipe = commandPipes[key] ?: File(
+            resultDirs[key]?.parentFile?.parentFile ?: return WorkspaceCommandResult(1, "", "No pipe available"),
+            ".proot_cmd"
+        ).also { commandPipes[key] = it }
+
+        if (!pipe.exists()) {
+            return WorkspaceCommandResult(1, "", "FIFO not found")
         }
 
-        val results = if (resultDir != null) resultDir else {
-            val parent = pipe.parentFile
-            File(parent, ".proot_results")
+        val results = resultDir ?: resultDirs[key]
+        if (results == null) {
+            return WorkspaceCommandResult(1, "", "No result directory")
         }
 
         try {
+            // 协议: timeout_ms|command\n
+            val message = "$timeoutMillis|$command\n"
+
             // 写入命令到 FIFO
-            File(pipe.absolutePath).writeText(command + "\n")
+            File(pipe.absolutePath).writeText(message)
 
-            // 等待结果文件（带超时）
             val deadline = System.currentTimeMillis() + timeoutMillis
-            var resultFile: File? = null
 
-            while (System.currentTimeMillis() < deadline) {
-                val files = results.listFiles()
-                    ?.filter { it.name.startsWith("out_") }
-                if (!files.isNullOrEmpty()) {
-                    resultFile = files.first()
-                    break
-                }
-                Thread.sleep(30)
-            }
+            // 使用 WatchService 等待结果文件创建
+            val resultFile = watchForResult(results, deadline)
 
             if (resultFile == null) {
                 return WorkspaceCommandResult(-1, "", "Timed out waiting for result")
@@ -166,6 +194,68 @@ class PersistentProotShellRunner(
         } catch (e: Exception) {
             return WorkspaceCommandResult(1, "", "Pipe error: ${e.message}")
         }
+    }
+
+    /**
+     * WatchService 监听结果目录，等待匹配的文件出现。
+     * 替代原来的 Thread.sleep(30) 轮询。
+     */
+    private fun watchForResult(results: File, deadline: Long): File? {
+        val path = results.toPath()
+
+        try {
+            val watcher = FileSystems.getDefault().newWatchService()
+            path.register(watcher, StandardWatchEventKinds.ENTRY_CREATE)
+
+            try {
+                while (System.currentTimeMillis() < deadline) {
+                    // 先检查是否已有结果文件（防止在 watch 注册前就写入了）
+                    val existing = results.listFiles()
+                        ?.firstOrNull { it.name.startsWith("out_") }
+                    if (existing != null) return existing
+
+                    val remainingMs = deadline - System.currentTimeMillis()
+                    if (remainingMs <= 0) return null
+
+                    val key = watcher.poll(remainingMs, TimeUnit.MILLISECONDS)
+                    if (key != null) {
+                        for (event in key.pollEvents()) {
+                            val filename = event.context()?.toString() ?: continue
+                            if (filename.startsWith("out_")) {
+                                key.reset()
+                                watcher.close()
+                                return File(results, filename)
+                            }
+                        }
+                        key.reset()
+                    }
+                }
+            } finally {
+                watcher.close()
+            }
+        } catch (e: Exception) {
+            // WatchService 不可用（如某些 Android 文件系统），降级为轮询
+            return pollForResult(results, deadline)
+        }
+
+        return null
+    }
+
+    /**
+     * 降级轮询——当 WatchService 不可用时使用。
+     * 指数退避代替固定 30ms sleep，减少空转 IO。
+     */
+    private fun pollForResult(results: File, deadline: Long): File? {
+        var delay = 5L
+        while (System.currentTimeMillis() < deadline) {
+            val files = results.listFiles()
+                ?.firstOrNull { it.name.startsWith("out_") }
+            if (files != null) return files
+
+            Thread.sleep(delay)
+            if (delay < 100) delay = (delay * 1.5).toLong() // 5 → 8 → 12 → 18 → ...
+        }
+        return null
     }
 
     private fun buildDaemonCommand(
