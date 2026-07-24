@@ -150,8 +150,13 @@ class PersistentProotShellRunner(
 
         prootProcesses[key] = process
 
-        // 等待 FIFO 就绪
-        Thread.sleep(1000)
+        // 等待 FIFO 就绪（轮询检测，通常只需 200-400ms）
+        val pipeFile = File(context.filesDir, ".proot_cmd")
+        var waited = 0
+        while (!pipeFile.exists() && waited < 1000) {
+            Thread.sleep(20)
+            waited += 20
+        }
 
         // 执行首次命令
         return sendCommandViaPipe(key, context.command, context.timeoutMillis, resultDir)
