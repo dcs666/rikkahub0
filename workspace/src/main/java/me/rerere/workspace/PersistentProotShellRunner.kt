@@ -190,8 +190,16 @@ class PersistentProotShellRunner(
         resultDir: File? = null,
     ): WorkspaceCommandResult {
         // resultDir = filesDir/.proot_results → parentFile = filesDir（FIFO 所在目录）
+        val resultDirForKey = resultDirs[key] ?: resultDir
+        val parentFile = resultDirForKey?.parentFile
+        if (parentFile == null) {
+            // 尝试重新初始化 resultDirs
+            val defaultResultDir = File(commandPipes[key]?.parentFile ?: File(".proot_results"), ".proot_results")
+            resultDirs[key] = defaultResultDir
+            return WorkspaceCommandResult(1, "", "No pipe available (resultDirs not initialized for key: $key)")
+        }
         val pipe = commandPipes[key] ?: File(
-            resultDirs[key]?.parentFile ?: return WorkspaceCommandResult(1, "", "No pipe available"),
+            parentFile,
             ".proot_cmd"
         ).also { commandPipes[key] = it }
 
