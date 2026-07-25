@@ -24,14 +24,16 @@ class PersistentProotShellRunner(
     private val nativeLibraryDir: File,
     private val extraBindMounts: List<WorkspaceBindMount> = emptyList(),
     private val patcher: RootfsPatcher = RootfsPatcher(),
+    /** 最大并发命令数（可调，默认 8） */
+    private val maxConcurrent: Int = 8,
+    /** 默认命令超时毫秒（可调，默认 60s） */
+    private val defaultTimeoutMs: Long = 60_000L,
 ) : WorkspaceShellRunner {
 
     companion object {
         private const val PROOT_EXEC = "libproot_exec.so"
         private const val PROOT_LOADER = "libproot_loader.so"
         private const val WORKSPACE_DIR = "/workspace"
-        private const val MAX_CONCURRENT = 4
-        private val CD_ONLY_REGEX = Regex("^\\s*cd\\s+")
     }
 
     // 缓存每个 workspace root 的 proot 进程和通信管道
@@ -55,7 +57,7 @@ class PersistentProotShellRunner(
         val existingProcess = prootProcesses[key]
 
         return if (existingProcess != null && existingProcess.isAlive) {
-            sendCommandViaPipe(key, context.command, context.timeoutMillis)
+            sendCommandViaPipe(key, context.command, context.cwd, context.timeoutMillis)
         } else {
             startPersistentProot(context, proot, loader)
         }
@@ -77,7 +79,8 @@ class PersistentProotShellRunner(
         activeWorkers[key] = AtomicInteger(0)
 
         val D = "${'$'}"
-        val MAX = MAX_CONCURRENT
+        val MAX = maxConcurrent
+        val DEFAULT_TIMEOUT_MS = defaultTimeoutMs
         val daemonScript = """
             /usr/bin/env -i HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin TERM=xterm-256color LANG=C.UTF-8 LC_ALL=C.UTF-8 /bin/sh -c '
                 FIFO=$WORKSPACE_DIR/.proot_cmd
@@ -94,22 +97,30 @@ class PersistentProotShellRunner(
                         [ -z "${D}line" ] && continue
                         [ "${D}line" = "__exit__" ] && break
 
-                        timeout_ms="${D}{line%%|*}"
-                        cmd="${D}{line#*|}"
+                        # 协议: timeout_ms|cwd|cmd
+                        rest="${D}line"
+                        timeout_ms="${D}{rest%%|*}"
+                        rest="${D}{rest#*|}"
+                        cmd_cwd="${D}{rest%%|*}"
+                        cmd="${D}{rest#*|}"
 
-                        [ -z "${D}timeout_ms" ] && timeout_ms=30000
+                        # 如果与之前的 cwd 不同，先 cd
+                        [ -n "${D}cmd_cwd" ] && [ "${D}cmd_cwd" != "${D}last_cwd" ] && cd "${D}cmd_cwd" && last_cwd="${D}cmd_cwd"
+
+                        [ -z "${D}timeout_ms" ] && timeout_ms=$DEFAULT_TIMEOUT_MS
                         timeout_s=$((timeout_ms / 1000))
                         [ "${D}timeout_s" -le 0 ] 2>/dev/null && timeout_s=30
 
                         result_file="${D}RESULT_DIR/out_$(date +%s%N)"
 
+                        # 等待空闲 slot（cd 命令串行，其余并发）
                         case "${D}cmd" in
                             cd\ *)
                                 eval "${D}cmd"
+                                last_cwd=$(pwd)
                                 echo "__exitcode__${D}?" > "${D}result_file"
                                 ;;
                             *)
-                                # 等待空闲 slot
                                 while : ; do
                                     pids_clean
                                     n=0; for p in ${D}pids; do n=$((n+1)); done
@@ -159,13 +170,14 @@ class PersistentProotShellRunner(
         }
 
         // 执行首次命令
-        return sendCommandViaPipe(key, context.command, context.timeoutMillis, resultDir)
+        return sendCommandViaPipe(key, context.command, context.cwd, context.timeoutMillis, resultDir)
     }
 
     private fun sendCommandViaPipe(
         key: String,
         command: String,
-        timeoutMillis: Long,
+        cwd: String = "",
+        timeoutMillis: Long = defaultTimeoutMs,
         resultDir: File? = null,
     ): WorkspaceCommandResult {
         // resultDir = filesDir/.proot_results → parentFile = filesDir（FIFO 所在目录）
@@ -184,8 +196,8 @@ class PersistentProotShellRunner(
         }
 
         try {
-            // 协议: timeout_ms|command\n
-            val message = "$timeoutMillis|$command\n"
+            // 协议: timeout_ms|cwd|command\n（每条命令独立工作目录）
+            val message = "$timeoutMillis|$cwd|$command\n"
 
             // 写入命令到 FIFO
             File(pipe.absolutePath).writeText(message)

@@ -49,6 +49,8 @@ val repositoryModule = module {
             baseDir = File(context.filesDir, "workspaces"),
             shellRunner = PersistentProotShellRunner(
                 nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir),
+                maxConcurrent = 8,       // 最多8个并发命令
+                defaultTimeoutMs = 60_000L, // 默认60s超时
                 extraBindMounts = listOf(
                     WorkspaceBindMount(
                         source = File(context.filesDir, FileFolders.SKILLS).apply { mkdirs() },
