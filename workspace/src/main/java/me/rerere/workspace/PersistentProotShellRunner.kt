@@ -5,7 +5,7 @@ import java.nio.file.FileSystems
 import java.nio.file.StandardWatchEventKinds
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
+
 
 /**
  * 持久化 proot shell runner —— 复用 proot 进程，避免每次启动开销
@@ -40,7 +40,6 @@ class PersistentProotShellRunner(
     private val prootProcesses = ConcurrentHashMap<String, Process>()
     private val commandPipes = ConcurrentHashMap<String, File>()
     private val resultDirs = ConcurrentHashMap<String, File>()
-    private val activeWorkers = ConcurrentHashMap<String, AtomicInteger>()
 
     override fun execute(context: WorkspaceShellContext): WorkspaceCommandResult {
         if (!context.linuxDir.hasUsableRootfs()) {
@@ -83,7 +82,6 @@ class PersistentProotShellRunner(
         val resultDir = File(context.filesDir, ".proot_results")
         resultDir.mkdirs()
         resultDirs[key] = resultDir
-        activeWorkers[key] = AtomicInteger(0)
 
         val D = "${'$'}"
         val MAX = maxConcurrent
