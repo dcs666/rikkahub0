@@ -54,7 +54,7 @@ class ProotShellRunner(
             }
             .start()
 
-        return process.readResult(context.timeoutMillis, context.stdin)
+        return process.readResult(context.timeoutMillis, context.stdin, maxOutputChars = context.maxOutputChars)
     }
 
     private fun buildCommand(

@@ -49,8 +49,8 @@ val repositoryModule = module {
             baseDir = File(context.filesDir, "workspaces"),
             shellRunner = PersistentProotShellRunner(
                 nativeLibraryDir = File(context.applicationInfo.nativeLibraryDir),
-                maxConcurrent = 8,       // 最多8个并发命令
-                defaultTimeoutMs = 60_000L, // 默认60s超时
+                maxConcurrent = 8,
+                defaultTimeoutMs = 60_000L,
                 extraBindMounts = listOf(
                     WorkspaceBindMount(
                         source = File(context.filesDir, FileFolders.SKILLS).apply { mkdirs() },
@@ -63,6 +63,10 @@ val repositoryModule = module {
                     WorkspaceBindMount(
                         source = File(context.filesDir, FileFolders.UPLOAD).apply { mkdirs() },
                         target = "/upload",
+                    ),
+                    WorkspaceBindMount(
+                        source = File(context.cacheDir, "proot_tmp").apply { mkdirs() },
+                        target = "/tmp",
                     ),
                 ),
             )

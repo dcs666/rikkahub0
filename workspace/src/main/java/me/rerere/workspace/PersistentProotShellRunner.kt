@@ -56,9 +56,16 @@ class PersistentProotShellRunner(
         val key = context.root
         val existingProcess = prootProcesses[key]
 
-        return if (existingProcess != null && existingProcess.isAlive) {
+        return if (existingProcess != null && existingProcess.isAlive && isDaemonHealthy(key)) {
             sendCommandViaPipe(key, context.command, context.cwd, context.timeoutMillis)
         } else {
+            // daemon 不健康或已死，清理后冷启动
+            if (existingProcess != null) {
+                existingProcess.destroyForcibly()
+                prootProcesses.remove(key)
+                commandPipes.remove(key)
+                resultDirs.remove(key)
+            }
             startPersistentProot(context, proot, loader)
         }
     }
@@ -113,12 +120,16 @@ class PersistentProotShellRunner(
 
                         result_file="${D}RESULT_DIR/out_$(date +%s%N)"
 
-                        # 等待空闲 slot（cd 命令串行，其余并发）
+                        # 等待空闲 slot（ping/cd 串行，其余并发）
                         case "${D}cmd" in
                             cd\ *)
                                 eval "${D}cmd"
                                 last_cwd=$(pwd)
                                 echo "__exitcode__${D}?" > "${D}result_file"
+                                ;;
+                            echo\ pong)
+                                echo "pong"
+                                echo "__exitcode__0" > "${D}result_file"
                                 ;;
                             *)
                                 while : ; do
@@ -286,6 +297,30 @@ class PersistentProotShellRunner(
             if (delay < 100) delay = (delay * 1.5).toLong() // 5 → 8 → 12 → 18 → ...
         }
         return null
+    }
+
+    /**
+     * 健康检查：写一个快速 ping 命令到 FIFO，验证 daemon 能响应。
+     * 超时 3s，失败则返回 false 触发重新冷启动。
+     */
+    private fun isDaemonHealthy(key: String): Boolean {
+        val pipe = commandPipes[key] ?: return false
+        if (!pipe.exists()) return false
+        val results = resultDirs[key] ?: return false
+
+        return try {
+            val pingMsg = "3000||echo pong\n"
+            File(pipe.absolutePath).writeText(pingMsg)
+            val deadline = System.currentTimeMillis() + 3000L
+            val pong = watchForResult(results, deadline)
+            if (pong != null) {
+                val output = pong.readText()
+                pong.delete()
+                output.contains("pong")
+            } else false
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun buildDaemonCommand(
