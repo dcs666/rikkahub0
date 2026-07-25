@@ -55,16 +55,25 @@ class PersistentProotShellRunner(
         val key = context.root
         val existingProcess = prootProcesses[key]
 
-        return if (existingProcess != null && existingProcess.isAlive && isDaemonHealthy(key)) {
+        // 检查是否需要重新初始化
+        val needsRestart = existingProcess == null || 
+                           !existingProcess.isAlive || 
+                           !isDaemonHealthy(key) ||
+                           resultDirs[key] == null ||
+                           commandPipes[key] == null
+
+        return if (!needsRestart) {
             sendCommandViaPipe(key, context.command, context.cwd, context.timeoutMillis)
         } else {
-            // daemon 不健康或已死，清理后冷启动
+            // 清理旧状态
             if (existingProcess != null) {
                 existingProcess.destroyForcibly()
-                prootProcesses.remove(key)
-                commandPipes.remove(key)
-                resultDirs.remove(key)
             }
+            prootProcesses.remove(key)
+            commandPipes.remove(key)
+            resultDirs.remove(key)
+            
+            // 冷启动
             startPersistentProot(context, proot, loader)
         }
     }
@@ -189,27 +198,29 @@ class PersistentProotShellRunner(
         timeoutMillis: Long = defaultTimeoutMs,
         resultDir: File? = null,
     ): WorkspaceCommandResult {
-        // resultDir = filesDir/.proot_results → parentFile = filesDir（FIFO 所在目录）
+        // 获取或创建 resultDir
         val resultDirForKey = resultDirs[key] ?: resultDir
-        val parentFile = resultDirForKey?.parentFile
-        if (parentFile == null) {
-            // 尝试重新初始化 resultDirs
-            val defaultResultDir = File(commandPipes[key]?.parentFile ?: File(".proot_results"), ".proot_results")
-            resultDirs[key] = defaultResultDir
-            return WorkspaceCommandResult(1, "", "No pipe available (resultDirs not initialized for key: $key)")
+        if (resultDirForKey == null) {
+            return WorkspaceCommandResult(1, "", "No pipe available: resultDirs not initialized for key: $key")
         }
-        val pipe = commandPipes[key] ?: File(
-            parentFile,
-            ".proot_cmd"
-        ).also { commandPipes[key] = it }
+        
+        val parentFile = resultDirForKey.parentFile
+        if (parentFile == null) {
+            return WorkspaceCommandResult(1, "", "No pipe available: parentFile is null for key: $key")
+        }
+        
+        // 获取或创建 pipe
+        val pipe = commandPipes[key] ?: File(parentFile, ".proot_cmd").also { 
+            commandPipes[key] = it 
+        }
 
         if (!pipe.exists()) {
-            return WorkspaceCommandResult(1, "", "FIFO not found")
+            return WorkspaceCommandResult(1, "", "No pipe available: FIFO not found at ${pipe.absolutePath}")
         }
 
         val results = resultDir ?: resultDirs[key]
         if (results == null) {
-            return WorkspaceCommandResult(1, "", "No result directory")
+            return WorkspaceCommandResult(1, "", "No pipe available: result directory not found")
         }
 
         try {
@@ -234,7 +245,7 @@ class PersistentProotShellRunner(
             // 解析退出码
             val exitCode = Regex("__exitcode__(\\d+)").find(output)
                 ?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            val cleanOutput = output.replace(Regex("__exitcode__\\d+\\n?"), "").trim()
+            val cleanOutput = output.replace(Regex("__exitcode__\\d+\n?"), "").trim()
 
             return WorkspaceCommandResult(exitCode, cleanOutput, "")
 
